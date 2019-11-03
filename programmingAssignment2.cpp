@@ -9,8 +9,8 @@ using namespace std;
 using namespace Eigen; 
 
 // constants
-#define H  0.1
-#define U -2.0
+const double H = 0.05;
+const double U = 2.0; 
 
 
 void displayVector(RowVectorXd& a, int size) {
@@ -28,7 +28,8 @@ void initalizeArray(RowVectorXd& a, int size) {
 		//a(i) = sin(M_PI * x);
 		//proper flux integral
 		double x_start = (i * H - 1);
-		a(i) = (-cos(M_PI * (x_start+H)) + cos(M_PI * x_start)) / (M_PI * H);
+		double x_end = x_start + H;
+		a(i) = (-cos(M_PI * (x_end)) + cos(M_PI * x_start)) / (M_PI * H);
 	}
 }
 //index shifting macro as recommended by Carl
@@ -49,7 +50,10 @@ void UW2_Flux_Integral(RowVectorXd& data, RowVectorXd&  result, int size) {
 		double tIM1 = data(indexIM1);
 		double tIM2 = data(indexIM2);
 
-		double CVAverage = (1.0* U ) / (2.0 * H) * (3.0 * tI - 4.0 * tIM1 + tIM2);
+		double term1 = 3.0 * tI;
+		double term2 = tIM1 * 4.0;
+		double constant = -1.0*U / (2.0 * H);
+		double CVAverage =  constant*(term1-term2+tIM2);
 		result(i) = CVAverage;
 	}
 }
@@ -58,15 +62,13 @@ void UW2_Flux_Integral(RowVectorXd& data, RowVectorXd&  result, int size) {
 
 void C2_Flux_Integral(RowVectorXd& data, RowVectorXd& result, int size) {
 	for (int i = 0; i < size; i++) {
-		int indexI = indexShift(size, i);
 		int indexIM1 = indexShift(size, i - 1);
 		int indexIP1 = indexShift(size, i +1);
 
-		double tI = data(indexI);
 		double tIM1 = data(indexIM1);
 		double tIP1 = data(indexIP1);
 
-		double CVAverage = (U) / (2.0 * H) * (tIP1- tIM1);
+		double CVAverage = (-1.0*U) / (2.0 * H) * (tIP1- tIM1);
 		result(i) = CVAverage;
 	}
 }
@@ -85,8 +87,15 @@ void UWB3_Flux_Integral(RowVectorXd& data, RowVectorXd& result,  int size) {
 		double tIM1 = data[indexIM1];
 		double tIM2 = data[indexIM2];
 
-		double CVAverage = (U) / (6.0 * H) * (2.0*tIP1+ 3.0*tI- 6.0*tIM1 + tIM2);
-		result(i) = CVAverage;
+		
+		double term1 = 2 * tIP1;
+		double term2 = 3* tI;
+		double term3 = 6 * tIM1;
+		double constant = -1.0*U / (6.0 * H);
+
+		double CVAverage = constant * (2.0*tIP1+ 3.0*tI- 6.0*tIM1 + tIM2);
+		double CVAverage2 = constant * (term1 + term2 - term3 + tIM2);
+		result(i) = CVAverage2;
 	 }
 }
 
@@ -97,11 +106,13 @@ double flux_L2_Norm(RowVectorXd& CV, int size, RowVectorXd & errorVector, RowVec
 	for (int i = 0; i < size; i++) {
 		double x = (i + 1.0 / 2.0) * H-1;
 		double correct = correctValueFunction(x);
-		double error = abs(CV[i] - correct);
+		double guess = CV(i);
+		double error = abs(guess - correct);
 		errorVector(i) = error;
 		correctVector(i) = correct; 
 		//printf("error: %f \n", error);
 		cumError += error*error; 
+		cumError += 0;
 	}
 	double L2Norm = pow(cumError / size, 0.5);
 	return L2Norm;
@@ -109,19 +120,33 @@ double flux_L2_Norm(RowVectorXd& CV, int size, RowVectorXd & errorVector, RowVec
 
 void RK2(RowVectorXd& data, RowVectorXd& updatedResult, void (*flux_Integral)(RowVectorXd& data, RowVectorXd& result, int size), int size, double timeStep)
 {
-	// calculate the space flux
+	// vectors 
 	Eigen::RowVectorXd fluxIntegral (size);
 	Eigen::RowVectorXd fluxIntegral1(size);
+	RowVectorXd w_1(size);
+
+	//steps:
 	flux_Integral(data, fluxIntegral, size);
+	//cout << "W_n Flux: " << fluxIntegral << endl;
+	w_1 = data + timeStep/2.0 * fluxIntegral;  
+	//cout << "W_1: " << w_1 << endl;
+
+	flux_Integral(w_1, fluxIntegral1, size);
+	//cout << "W_1 Flux: " << fluxIntegral1 << endl;
+	updatedResult = data + timeStep * (fluxIntegral1);
+}
+
+void RK2_Validation(RowVectorXd& data, RowVectorXd& updatedResult, void (*flux_Integral)(RowVectorXd& data, RowVectorXd& result, int size, double time), int size, double timeStep, double currentTime)
+{
+	// calculate the space flux
+	Eigen::RowVectorXd fluxIntegral(size);
+	Eigen::RowVectorXd fluxIntegral1(size);
+	flux_Integral(data, fluxIntegral, size, currentTime);
 
 	// constants
 	RowVectorXd w_1(size);
-	w_1 = data + timeStep/2.0 * fluxIntegral; 
-	//cout << "W_1: ";
-	//cout << w_1 << endl; 
-	flux_Integral(w_1, fluxIntegral1, size);
-	//cout << "W_1_Flux: ";
-	//cout << fluxIntegral1 << endl;
+	w_1 = data + timeStep / 2.0 * fluxIntegral;
+	flux_Integral(w_1, fluxIntegral1, size, currentTime);
 	updatedResult = data + timeStep * (fluxIntegral1);
 
 }
@@ -129,11 +154,8 @@ void RK2(RowVectorXd& data, RowVectorXd& updatedResult, void (*flux_Integral)(Ro
 
 void RK4(RowVectorXd& data, RowVectorXd& updatedResult, void flux_Integral(RowVectorXd& data, RowVectorXd& result, int size), int size, double timeStep)
 {
-	// calculate the space flux
+	// vectors
 	Eigen::RowVectorXd fluxIntegral (size);
-	flux_Integral(data, fluxIntegral, size);
-
-	// constants
 	Eigen::RowVectorXd w_1(size);
 	Eigen::RowVectorXd fluxIntegral1(size);
 	Eigen::RowVectorXd w_2(size);
@@ -141,15 +163,23 @@ void RK4(RowVectorXd& data, RowVectorXd& updatedResult, void flux_Integral(RowVe
 	Eigen::RowVectorXd w_3(size);
 	Eigen::RowVectorXd fluxIntegral3(size);
 
-	w_1 = data + timeStep/2 * fluxIntegral1;
-	w_2 = data + timeStep / 2 * fluxIntegral2;
-	w_3 = data + timeStep / 2 * fluxIntegral3;
-	updatedResult = data + timeStep / 6 * (data + 2 * fluxIntegral1 + 2 * fluxIntegral2 + fluxIntegral3);
+	// steps
+	flux_Integral(data, fluxIntegral, size);
+	w_1 = data + timeStep/2 * fluxIntegral;
+
+	flux_Integral(w_1, fluxIntegral1, size);
+	w_2 = data + timeStep / 2 * fluxIntegral1;
+
+	flux_Integral(w_2, fluxIntegral2, size);
+	w_3 = data + timeStep / 2 * fluxIntegral2;
+
+	flux_Integral(w_3, fluxIntegral3, size);
+	updatedResult = data + timeStep / 6.0 * (fluxIntegral + 2.0 * fluxIntegral1 + 2.0 * fluxIntegral2 + fluxIntegral3);
 
 }
 
 double partOneRightValue(double x) {
-	return U * M_PI * cos(M_PI * x);
+	return -1.0*U * M_PI * cos(M_PI * x);
 }
 void partOne()
 {
@@ -194,22 +224,28 @@ void partOne()
 }
 
 
-void fakeFluxIntegral(RowVectorXd& data, RowVectorXd& result, int size) {
-	result(0) = 1;
-}
-void partTwo() {
+void fakeFluxIntegral(RowVectorXd& data, RowVectorXd& result, int size, double time) {
+	// we know the exact solution
+	// solve over 0 to .5
+	result(0) = U/H*( sin(M_PI*(H+U*time))- sin(M_PI * ( U * time)));
 
-	// "solving" du/dt= 1
+	// try random one
+	//dT/dt = xt
+	//result(0) =time  ;
+}
+
+void partTwoRK2() {
+
+	// "solving" du/dt= sin(piX)
 	RowVectorXd cellArray(1); // our solution vector of one
 	RowVectorXd nextTimeStep(1);
-	double timeStep = 0.025 * 0.8;
-	cellArray(0) = 0.0; 
-	RK2(cellArray, nextTimeStep, fakeFluxIntegral, 1,timeStep);
+	double timeStep = 0.025;
+	cellArray(0) = sin(M_PI*H/2.0); 
+	RK2_Validation(cellArray, nextTimeStep, fakeFluxIntegral, 1,timeStep,0);
 	cout << cellArray << endl;
 	cout << nextTimeStep << endl;
 
-	cellArray = nextTimeStep; 
-	RK2(nextTimeStep, nextTimeStep, fakeFluxIntegral, 1,timeStep);
+	RK2_Validation(nextTimeStep, nextTimeStep, fakeFluxIntegral, 1,timeStep,timeStep);
 	cout << nextTimeStep << endl;
 
 }
@@ -217,9 +253,10 @@ void partTwo() {
 double partThreeRightValue(double x) {
 	return  sin(M_PI * x);
 }
-void partThree() {
+void partThree_RK2_And_UW2() {
 	double targetTime = 2.0; 
-	double timeStep = 0.025*0.8/4; 
+	//double timeStep = 0.05/(0.2/H)*0.8; 
+	double timeStep = 0.006*0.8; // for H = 0.025
 	int steps = 2.0 / timeStep;
 	const int numCells = 2.0 / H;
 	double time = 0; 
@@ -235,26 +272,52 @@ void partThree() {
 	for (int i = 0; i < steps; i++) {
 		time = time +timeStep;
 		RK2(cellArray, cellArray, UW2_Flux_Integral, numCells,timeStep);
-
-		//cout << "time: " << time << endl; 
-		//cout << "result: ";
-		//cout << cellArray << endl;
 	}
 	cout << "final iteration: " << endl;
 	displayVector(cellArray, numCells);
 	cout <<"error norm : "<<flux_L2_Norm(cellArray, numCells, error, correct, partThreeRightValue) << endl;
 	cout << "error vector : " << endl; 
 	displayVector(error, numCells);
-	cout << "correct: "<< correct << endl;
+	//cout << "correct: "<< correct << endl;
 
 
 }
 
+void partThree_RK4_And_C2() {
+	double targetTime = 2.0;
+	//double timeStep = 0.05/(0.2/H)*0.8; 
+	double timeStep = 0.0002*.8; // for H = 0.25
+	int steps = 2.0/timeStep;
+	const int numCells = 2.0 / H;
+	double time = 0;
+
+	RowVectorXd cellArray(numCells);
+	RowVectorXd correct(numCells);
+	RowVectorXd error(numCells);
+
+	initalizeArray(cellArray, numCells);
+	initalizeArray(correct, numCells);
+	cout << "initial values: " << cellArray << endl;
+
+	for (int i = 0; i < steps; i++) {
+		time = time + timeStep;
+		RK4(cellArray, cellArray, C2_Flux_Integral, numCells, timeStep);
+	}
+	cout << "final iteration: " << endl;
+	displayVector(cellArray, numCells);
+	cout << "error norm : " << flux_L2_Norm(cellArray, numCells, error, correct, partThreeRightValue) << endl;
+	cout << "error vector : " << endl;
+	displayVector(error, numCells);
+	cout << "correct: " << correct << endl;
+
+
+}
 
 int main()
 {
-	partOne();
-	//partTwo();
-	//partThree();
+	//partOne();
+	//partTwoRK2();
+	partThree_RK2_And_UW2();
+	//partThree_RK4_And_C2();
 
 }
